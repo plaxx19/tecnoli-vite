@@ -1,4 +1,5 @@
-import { supabase, isSupabaseConfigured } from "./supabaseClient.js";
+import "./style.css";
+import { supabase, isSupabaseConfigured } from "./lib/supabaseClient.js";
 
 const money = new Intl.NumberFormat("es-MX", {
   style: "currency", currency: "MXN", maximumFractionDigits: 2
@@ -26,6 +27,15 @@ const demoProducts = [
   { id: "p17", name: "HyperX Cloud III", category: "Periféricos", price: 2499, image_url: "https://images.unsplash.com/photo-1599669454699-248893623440?auto=format&fit=crop&w=600&q=80" },
   { id: "p18", name: "Razer DeathAdder", category: "Periféricos", price: 1599, image_url: "https://images.unsplash.com/photo-1615663245857-ac93bb7c39e7?auto=format&fit=crop&w=600&q=80" }
 ];
+
+// Convierte "Tarjetas gráficas" -> "tarjetas-graficas". Así la categoría funciona
+// igual si en Supabase guardas el nombre visible o el slug.
+const slugify = (value = "") =>
+  String(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+
+const BEST_LABEL = "Más vendido";
+const isBestSeller = (p) => p.best_seller === true || p.badge === BEST_LABEL;
 
 let products = [];
 const cart = new Map();
@@ -75,15 +85,16 @@ function renderMiniProduct(product) {
 }
 
 function renderProducts(list) {
-  const best = list.filter(p => p.best_seller || p.badge).slice(0, 5);
-  const fallbackBest = best.length ? best : list.slice(0, 5);
+  const fallbackBest = list.filter(isBestSeller).slice(0, 5);
   bestContainer.innerHTML = fallbackBest.length
     ? fallbackBest.map(renderBestSeller).join("")
     : `<p class="empty-cart">No se encontraron productos.</p>`;
 
   document.querySelectorAll(".mini-grid").forEach(grid => {
-    const category = grid.dataset.category;
-    const categoryProducts = list.filter(p => p.category === category).slice(0, 3);
+    const category = grid.dataset.category; // ya viene como slug
+    const categoryProducts = list
+      .filter(p => slugify(p.category) === category)
+      .slice(0, 3);
     grid.innerHTML = categoryProducts.length
       ? categoryProducts.map(renderMiniProduct).join("")
       : `<p class="empty-cart">Sin productos</p>`;
@@ -92,20 +103,22 @@ function renderProducts(list) {
 
 async function loadProducts() {
   statusMessage.textContent = "Cargando catálogo…";
-  if (isSupabaseConfigured) {
-    // Consulta solicitada: trae el catálogo desde la tabla products.
+  if (!isSupabaseConfigured) {
+    products = demoProducts;
+    statusMessage.textContent = "Vista de demostración: faltan las variables VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY en .env.";
+  } else {
     const { data, error } = await supabase.from("products").select("*").order("name");
     if (error) {
       console.error("Error consultando Supabase:", error);
       products = demoProducts;
-      statusMessage.textContent = "No fue posible cargar Supabase. Se muestran productos de demostración.";
+      statusMessage.textContent = `No se pudo leer Supabase (${error.message}). Se muestran productos de demostración.`;
+    } else if (!data?.length) {
+      products = demoProducts;
+      statusMessage.textContent = "Conectado a Supabase, pero la tabla products está vacía o sin política de lectura (RLS). Mostrando demostración.";
     } else {
-      products = data || [];
+      products = data;
       statusMessage.textContent = "Catálogo conectado a Supabase.";
     }
-  } else {
-    products = demoProducts;
-    statusMessage.textContent = "Vista de demostración. Configura las credenciales en supabaseClient.js para conectar tu catálogo.";
   }
   renderProducts(products);
 }
